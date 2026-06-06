@@ -590,9 +590,9 @@
             <label for="deviceIdInput">设备ID（与ESP32 config.py中的DEVICE_ID一致）</label>
             <input type="text" id="deviceIdInput" placeholder="esp32_20231819403027"
             value="esp32_20231819403027">
-            <label for="brokerInput">MQTT Broker 地址</label>
-            <input type="text" id="brokerInput" placeholder="t8151952.ala.cn-hangzhou.emqxsl.cn"
-            value="t8151952.ala.cn-hangzhou.emqxsl.cn">
+            <label for="brokerInput">MQTT Broker 地址（EMQX Cloud 或公共测试）</label>
+            <input type="text" id="brokerInput" placeholder="broker.emqx.io"
+            value="broker.emqx.io">
             <div class="btn-row">
                 <button class="btn-default" onclick="hideSettings()">取消</button>
                 <button class="btn-connect" onclick="applySettings()">✅ 连接</button>
@@ -604,7 +604,13 @@
         // ==================== 配置 ====================
         const DEFAULT_DEVICE_ID = 'esp32_20231819403027';
         const DEFAULT_BROKER = 'broker.emqx.io';
-        const WS_PORT = 8083;     // WebSocket 非TLS端口
+
+        // 根据当前页面协议自动选择 WebSocket 协议
+        // GitHub Pages 是 HTTPS → 必须用 wss://（浏览器阻止混合内容）
+        const PAGE_PROTOCOL = window.location.protocol;  // 'https:' 或 'file:' 或 'http:'
+        const WS_PROTOCOL = (PAGE_PROTOCOL === 'https:') ? 'wss' : 'ws';
+        // WS 端口: 8083, WSS 端口: 8084
+        const WS_PORT = (WS_PROTOCOL === 'wss') ? 8084 : 8083;
         const WS_PATH = '/mqtt';
 
         let DEVICE_ID = localStorage.getItem('esp32_device_id') || DEFAULT_DEVICE_ID;
@@ -625,7 +631,7 @@
 
         function connectMQTT() {
             const topics = getTopics();
-            const brokerUrl = `ws://${MQTT_BROKER}:${WS_PORT}${WS_PATH}`;
+            const brokerUrl = `${WS_PROTOCOL}://${MQTT_BROKER}:${WS_PORT}${WS_PATH}`;
 
             updateStatus('connecting', '正在连接...');
             addLog('system', '连接 MQTT Broker: ' + brokerUrl);
@@ -922,7 +928,8 @@
         });
 
         console.log('🌐 ESP32 远程监控 Web 控制端已就绪');
-        console.log('📡 MQTT Broker: wss://' + MQTT_BROKER + ':' + WS_PORT + WS_PATH);
+        console.log('📡 MQTT Broker: ' + WS_PROTOCOL + '://' + MQTT_BROKER + ':' + WS_PORT + WS_PATH);
+        console.log('🔒 页面协议: ' + PAGE_PROTOCOL + ' → WS协议: ' + WS_PROTOCOL);
         console.log('🆔 设备ID: ' + DEVICE_ID);
     </script>
 </body>
