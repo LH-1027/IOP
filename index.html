@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>ESP32 远程监控与控制</title>
+
+    <!-- MQTT.js 客户端库 -->
+    <script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
+
+    <style>
+        :root {
+            --bg: #f0f2f5;
+            --card-bg: #ffffff;
+            --text: #333333;
+            --text-secondary: #666666;
+            --primary: #1890ff;
+            --danger: #ff4d4f;
+            --success: #52c41a;
+            --warning: #faad14;
+            --border-radius: 12px;
+            --shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+                'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 16px;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .container {
+            max-width: 480px;
+            margin: 0 auto;
+        }
+
+        /* ========== 头部 ========== */
+        .header {
+            text-align: center;
+            padding: 20px 0 16px;
+        }
+
+        .header h1 {
+            font-size: 22px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 4px;
+        }
+
+        .header .subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* ========== 连接状态条 ========== */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border-radius: 20px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .status-bar.connected {
+            background: #f6ffed;
+            color: #389e0d;
+            border: 1px solid #b7eb8f;
+        }
+
+        .status-bar.disconnected {
+            background: #fff2f0;
+            color: #cf1322;
+            border: 1px solid #ffa39e;
+        }
+
+        .status-bar.connecting {
+            background: #fffbe6;
+            color: #d48806;
+            border: 1px solid #ffe58f;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .connected .status-dot {
+            background: #52c41a;
+            animation: pulse 2s infinite;
+        }
+
+        .disconnected .status-dot {
+            background: #ff4d4f;
+        }
+
+        .connecting .status-dot {
+            background: #faad14;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%,
+            100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        /* ========== 卡片容器 ========== */
+        .card {
+            background: var(--card-bg);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-title .icon {
+            font-size: 20px;
+        }
+
+        /* ========== 传感器数据展示 ========== */
+        .sensor-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .sensor-item {
+            background: linear-gradient(135deg, #f5f7fa 0%, #f0f2f5 100%);
+            border-radius: 12px;
+            padding: 18px 16px;
+            text-align: center;
+            transition: transform 0.2s;
+        }
+
+        .sensor-item:active {
+            transform: scale(0.97);
+        }
+
+        .sensor-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .sensor-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: #1a1a1a;
+            line-height: 1.1;
+        }
+
+        .sensor-value .unit {
+            font-size: 16px;
+            font-weight: 400;
+            color: var(--text-secondary);
+            margin-left: 2px;
+        }
+
+        .sensor-value.hot {
+            color: #ff4d4f;
+        }
+        .sensor-value.warm {
+            color: #faad14;
+        }
+        .sensor-value.cool {
+            color: #1890ff;
+        }
+
+        .sensor-value.wet {
+            color: #1890ff;
+        }
+        .sensor-value.dry {
+            color: #faad14;
+        }
+
+        .sensor-time {
+            font-size: 11px;
+            color: #999;
+            margin-top: 8px;
+        }
+
+        /* ========== 控制按钮区域 ========== */
+        .control-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .control-btn {
+            position: relative;
+            border: 2px solid #e8e8e8;
+            border-radius: 12px;
+            padding: 20px 16px;
+            text-align: center;
+            cursor: pointer;
+            background: #fafafa;
+            transition: all 0.25s ease;
+            overflow: hidden;
+        }
+
+        .control-btn:active {
+            transform: scale(0.96);
+        }
+
+        .control-btn.on {
+            background: linear-gradient(135deg, #f6ffed, #d9f7be);
+            border-color: #b7eb8f;
+        }
+
+        .control-btn.on .btn-icon {
+            color: #52c41a;
+        }
+
+        .control-btn.off {
+            background: linear-gradient(135deg, #fff1f0, #ffccc7);
+            border-color: #ffa39e;
+        }
+
+        .control-btn.off .btn-icon {
+            color: #ff4d4f;
+        }
+
+        .btn-icon {
+            font-size: 36px;
+            display: block;
+            margin-bottom: 8px;
+            transition: transform 0.3s;
+        }
+
+        .btn-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .btn-status {
+            font-size: 11px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        /* ========== 模式切换 ========== */
+        .mode-section {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 0;
+        }
+
+        .mode-label {
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .mode-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .mode-badge.auto {
+            background: #e6f7ff;
+            color: #1890ff;
+        }
+
+        .mode-badge.manual {
+            background: #fff7e6;
+            color: #fa8c16;
+        }
+
+        .toggle-switch {
+            width: 50px;
+            height: 28px;
+            background: #d9d9d9;
+            border-radius: 14px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .toggle-switch.active {
+            background: #1890ff;
+        }
+
+        .toggle-switch::after {
+            content: '';
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            transition: left 0.3s;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+
+        .toggle-switch.active::after {
+            left: 24px;
+        }
+
+        /* ========== 消息日志 ========== */
+        .log-area {
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 12px;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .log-area .log-item {
+            padding: 2px 0;
+            border-bottom: 1px solid #f5f5f5;
+        }
+
+        .log-area .log-item .time {
+            color: #999;
+            margin-right: 8px;
+        }
+
+        .log-area .log-item.up {
+            color: #1890ff;
+        }
+        .log-area .log-item.down {
+            color: #52c41a;
+        }
+
+        /* ========== 底部信息 ========== */
+        .footer {
+            text-align: center;
+            padding: 8px;
+            font-size: 12px;
+            color: #bbb;
+        }
+
+        .footer a {
+            color: #999;
+            text-decoration: none;
+        }
+
+        /* ========== 设备ID输入弹窗 ========== */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.45);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            width: 90%;
+            max-width: 360px;
+            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.15);
+        }
+
+        .modal h2 {
+            font-size: 18px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
+        .modal label {
+            font-size: 13px;
+            color: #666;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .modal input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d9d9d9;
+            border-radius: 8px;
+            font-size: 15px;
+            margin-bottom: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .modal input:focus {
+            border-color: #1890ff;
+        }
+
+        .modal .btn-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .modal button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .modal .btn-connect {
+            background: #1890ff;
+            color: white;
+        }
+
+        .modal .btn-default {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        /* ========== 设置按钮 ========== */
+        .settings-btn {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: white;
+            border: 1px solid #e0e0e0;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        /* 响应式 */
+        @media (max-width: 360px) {
+            .sensor-value {
+                font-size: 28px;
+            }
+            .btn-icon {
+                font-size: 28px;
+            }
+            .card {
+                padding: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 设置按钮 -->
+    <button class="settings-btn" onclick="showSettings()" title="设置设备ID">⚙</button>
+
+    <!-- 主容器 -->
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <h1>🌐 ESP32 远程监控</h1>
+            <p class="subtitle">MQTT · EMQX Cloud · 实时数据</p>
+        </div>
+
+        <!-- 连接状态 -->
+        <div class="status-bar disconnected" id="statusBar">
+            <span class="status-dot"></span>
+            <span id="statusText">未连接</span>
+        </div>
+
+        <!-- 传感器数据卡片 -->
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📊</span> 实时环境数据
+            </div>
+            <div class="sensor-grid">
+                <div class="sensor-item" id="tempCard">
+                    <div class="sensor-label">🌡️ 温度</div>
+                    <div class="sensor-value cool" id="tempValue">
+                        --<span class="unit">°C</span>
+                    </div>
+                    <div class="sensor-time" id="tempTime">等待数据...</div>
+                </div>
+                <div class="sensor-item" id="humiCard">
+                    <div class="sensor-label">💧 湿度</div>
+                    <div class="sensor-value cool" id="humiValue">
+                        --<span class="unit">%</span>
+                    </div>
+                    <div class="sensor-time" id="humiTime">等待数据...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设备控制卡片 -->
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">🎮</span> 设备控制
+            </div>
+            <div class="mode-section" style="margin-bottom: 16px;">
+                <span class="mode-label">🔧 控制模式</span>
+                <span class="mode-badge auto" id="modeBadge">自动</span>
+            </div>
+            <div class="control-grid">
+                <!-- LED 控制 -->
+                <div class="control-btn off" id="ledBtn" onclick="toggleLED()">
+                    <span class="btn-icon">💡</span>
+                    <span class="btn-label">LED 灯</span>
+                    <span class="btn-status" id="ledStatus">已关闭</span>
+                </div>
+                <!-- 继电器控制 -->
+                <div class="control-btn off" id="relayBtn" onclick="toggleRelay()">
+                    <span class="btn-icon">⚡</span>
+                    <span class="btn-label">继电器</span>
+                    <span class="btn-status" id="relayStatus">已断开</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 快捷操作 -->
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">⚡</span> 快捷操作
+            </div>
+            <div class="mode-section">
+                <span class="mode-label">自动模式（根据温湿度自动控制）</span>
+                <div class="toggle-switch active" id="autoToggle" onclick="toggleAutoMode()"></div>
+            </div>
+        </div>
+
+        <!-- 消息日志卡片 -->
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📝</span> 数据日志
+                <span style="font-size:12px;color:#999;font-weight:400;margin-left:auto;"
+                    onclick="clearLogs()">清空</span>
+            </div>
+            <div class="log-area" id="logArea">
+                <div class="log-item"><span class="time">--:--:--</span>等待数据...</div>
+            </div>
+        </div>
+
+        <!-- 底部 -->
+        <div class="footer">
+            <p>ESP32 + EMQX · IoT 综合实训项目</p>
+            <p>MQTT Broker: broker.emqx.io (公共测试)</p>
+        </div>
+    </div>
+
+    <!-- 设备ID设置弹窗 -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <h2>⚙️ 连接设置</h2>
+            <label for="deviceIdInput">设备ID（与ESP32 config.py中的DEVICE_ID一致）</label>
+            <input type="text" id="deviceIdInput" placeholder="esp32_20231819403027"
+            value="esp32_20231819403027">
+            <label for="brokerInput">MQTT Broker 地址</label>
+            <input type="text" id="brokerInput" placeholder="t8151952.ala.cn-hangzhou.emqxsl.cn"
+            value="t8151952.ala.cn-hangzhou.emqxsl.cn">
+            <div class="btn-row">
+                <button class="btn-default" onclick="hideSettings()">取消</button>
+                <button class="btn-connect" onclick="applySettings()">✅ 连接</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== 配置 ====================
+        const DEFAULT_DEVICE_ID = 'esp32_20231819403027';
+        const DEFAULT_BROKER = 'broker.emqx.io';
+        const WS_PORT = 8083;     // WebSocket 非TLS端口
+        const WS_PATH = '/mqtt';
+
+        let DEVICE_ID = localStorage.getItem('esp32_device_id') || DEFAULT_DEVICE_ID;
+        let MQTT_BROKER = localStorage.getItem('esp32_broker') || DEFAULT_BROKER;
+
+        // Topic定义（与ESP32 config.py保持一致）
+        function getTopics() {
+            return {
+                sensor: `esp32_project/${DEVICE_ID}/sensor`,
+                status: `esp32_project/${DEVICE_ID}/status`,
+                control: `esp32_project/${DEVICE_ID}/control`,
+            };
+        }
+
+        // ==================== MQTT客户端 ====================
+        let mqttClient = null;
+        let connected = false;
+
+        function connectMQTT() {
+            const topics = getTopics();
+            const brokerUrl = `ws://${MQTT_BROKER}:${WS_PORT}${WS_PATH}`;
+
+            updateStatus('connecting', '正在连接...');
+            addLog('system', '连接 MQTT Broker: ' + brokerUrl);
+
+            try {
+                mqttClient = mqtt.connect(brokerUrl, {
+                    clientId: 'web_' + DEVICE_ID + '_' + Math.random().toString(16).substr(2, 8),
+                    keepalive: 60,
+                    clean: true,
+                    reconnectPeriod: 5000,
+                    connectTimeout: 10000,
+                });
+
+                mqttClient.on('connect', () => {
+                    connected = true;
+                    updateStatus('connected', '已连接 · ' + MQTT_BROKER);
+                    addLog('system', '✅ MQTT 连接成功');
+
+                    // 订阅传感器数据主题
+                    mqttClient.subscribe(topics.sensor, { qos: 0 }, (err) => {
+                        if (!err) {
+                            addLog('system', '📡 已订阅: ' + topics.sensor);
+                        }
+                    });
+
+                    // 订阅设备状态主题
+                    mqttClient.subscribe(topics.status, { qos: 0 }, (err) => {
+                        if (!err) {
+                            addLog('system', '📡 已订阅: ' + topics.status);
+                        }
+                    });
+                });
+
+                mqttClient.on('message', (topic, message) => {
+                    try {
+                        const payload = JSON.parse(message.toString());
+                        const topicStr = topic.toString();
+
+                        if (topicStr === topics.sensor) {
+                            handleSensorData(payload);
+                        } else if (topicStr === topics.status) {
+                            handleStatusData(payload);
+                        }
+                    } catch (e) {
+                        console.error('消息解析失败:', e);
+                    }
+                });
+
+                mqttClient.on('error', (err) => {
+                    console.error('MQTT错误:', err);
+                    connected = false;
+                    updateStatus('disconnected', '连接错误');
+                    addLog('error', '❌ MQTT 错误: ' + err.message);
+                });
+
+                mqttClient.on('close', () => {
+                    connected = false;
+                    updateStatus('disconnected', '连接已断开');
+                    addLog('system', '🔌 MQTT 连接已断开');
+                });
+
+                mqttClient.on('reconnect', () => {
+                    updateStatus('connecting', '重新连接中...');
+                    addLog('system', '🔄 正在重连...');
+                });
+
+            } catch (e) {
+                console.error('MQTT连接失败:', e);
+                updateStatus('disconnected', '连接失败');
+                addLog('error', '❌ 连接失败: ' + e.message);
+            }
+        }
+
+        function disconnectMQTT() {
+            if (mqttClient) {
+                mqttClient.end();
+                mqttClient = null;
+                connected = false;
+                updateStatus('disconnected', '已断开连接');
+            }
+        }
+
+        // ==================== 数据处理 ====================
+        function handleSensorData(data) {
+            const temp = data.temperature;
+            const humi = data.humidity;
+            const ts = new Date(data.timestamp * 1000);
+
+            // 更新温度显示
+            const tempEl = document.getElementById('tempValue');
+            tempEl.innerHTML = temp + '<span class="unit">°C</span>';
+            tempEl.className = 'sensor-value';
+            if (temp >= 30) tempEl.classList.add('hot');
+            else if (temp >= 25) tempEl.classList.add('warm');
+            else tempEl.classList.add('cool');
+
+            document.getElementById('tempTime').textContent =
+                '更新: ' + ts.toLocaleTimeString('zh-CN');
+
+            // 更新湿度显示
+            const humiEl = document.getElementById('humiValue');
+            humiEl.innerHTML = humi + '<span class="unit">%</span>';
+            humiEl.className = 'sensor-value';
+            if (humi >= 75) humiEl.classList.add('wet');
+            else if (humi <= 40) humiEl.classList.add('dry');
+            else humiEl.classList.add('cool');
+
+            document.getElementById('humiTime').textContent =
+                '更新: ' + ts.toLocaleTimeString('zh-CN');
+
+            addLog('up', `🌡️ 温度:${temp}°C | 💧 湿度:${humi}%`);
+        }
+
+        function handleStatusData(data) {
+            // 更新LED状态
+            updateLEDUI(data.led === 'on');
+            // 更新继电器状态
+            updateRelayUI(data.relay === 'on');
+            // 更新模式
+            const mode = data.mode || 'auto';
+            updateModeUI(mode);
+        }
+
+        // ==================== 控制指令发送 ====================
+        function sendCommand(target, value) {
+            if (!connected || !mqttClient) {
+                alert('MQTT未连接，请先连接！');
+                return;
+            }
+
+            const cmd = {
+                cmd: 'set',
+                target: target,
+                value: value,
+            };
+
+            const topic = getTopics().control;
+            mqttClient.publish(topic, JSON.stringify(cmd), { qos: 1 }, (err) => {
+                if (err) {
+                    addLog('error', '❌ 发送失败: ' + err.message);
+                } else {
+                    addLog('down', `📤 发送指令: ${target}=${value}`);
+                }
+            });
+        }
+
+        function toggleLED() {
+            const ledEl = document.getElementById('ledBtn');
+            const currentState = ledEl.classList.contains('on');
+            const newValue = currentState ? 'off' : 'on';
+            sendCommand('led', newValue);
+            // 乐观更新UI
+            updateLEDUI(!currentState);
+        }
+
+        function toggleRelay() {
+            const relayEl = document.getElementById('relayBtn');
+            const currentState = relayEl.classList.contains('on');
+            const newValue = currentState ? 'off' : 'on';
+            sendCommand('relay', newValue);
+            updateRelayUI(!currentState);
+        }
+
+        function toggleAutoMode() {
+            const toggle = document.getElementById('autoToggle');
+            const currentMode = toggle.classList.contains('active');
+            const newMode = currentMode ? 'manual' : 'auto';
+            sendCommand('mode', newMode);
+            updateModeUI(newMode);
+        }
+
+        // ==================== UI更新 ====================
+        function updateLEDUI(isOn) {
+            const btn = document.getElementById('ledBtn');
+            const status = document.getElementById('ledStatus');
+            if (isOn) {
+                btn.classList.add('on');
+                btn.classList.remove('off');
+                status.textContent = '已开启';
+            } else {
+                btn.classList.add('off');
+                btn.classList.remove('on');
+                status.textContent = '已关闭';
+            }
+        }
+
+        function updateRelayUI(isOn) {
+            const btn = document.getElementById('relayBtn');
+            const status = document.getElementById('relayStatus');
+            if (isOn) {
+                btn.classList.add('on');
+                btn.classList.remove('off');
+                status.textContent = '已吸合';
+            } else {
+                btn.classList.add('off');
+                btn.classList.remove('on');
+                status.textContent = '已断开';
+            }
+        }
+
+        function updateModeUI(mode) {
+            const toggle = document.getElementById('autoToggle');
+            const badge = document.getElementById('modeBadge');
+            if (mode === 'auto') {
+                toggle.classList.add('active');
+                badge.textContent = '自动';
+                badge.className = 'mode-badge auto';
+            } else {
+                toggle.classList.remove('active');
+                badge.textContent = '手动';
+                badge.className = 'mode-badge manual';
+            }
+        }
+
+        function updateStatus(state, text) {
+            const bar = document.getElementById('statusBar');
+            const textEl = document.getElementById('statusText');
+            bar.className = 'status-bar ' + state;
+            textEl.textContent = text;
+        }
+
+        // ==================== 日志 ====================
+        function addLog(type, msg) {
+            const logArea = document.getElementById('logArea');
+            const now = new Date();
+            const time = now.toLocaleTimeString('zh-CN');
+            const div = document.createElement('div');
+            div.className = 'log-item ' + type;
+            div.innerHTML = '<span class="time">' + time + '</span>' + msg;
+            logArea.prepend(div);
+
+            // 限制日志数量
+            while (logArea.children.length > 50) {
+                logArea.removeChild(logArea.lastChild);
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logArea').innerHTML =
+                '<div class="log-item"><span class="time">--:--:--</span>日志已清空</div>';
+        }
+
+        // ==================== 设置弹窗 ====================
+        function showSettings() {
+            document.getElementById('deviceIdInput').value = DEVICE_ID;
+            document.getElementById('brokerInput').value = MQTT_BROKER;
+            document.getElementById('settingsModal').classList.add('show');
+        }
+
+        function hideSettings() {
+            document.getElementById('settingsModal').classList.remove('show');
+        }
+
+        function applySettings() {
+            const newDeviceId = document.getElementById('deviceIdInput').value.trim();
+            const newBroker = document.getElementById('brokerInput').value.trim();
+
+            if (!newDeviceId) {
+                alert('请输入设备ID');
+                return;
+            }
+            if (!newBroker) {
+                alert('请输入MQTT Broker地址');
+                return;
+            }
+
+            // 保存设置
+            DEVICE_ID = newDeviceId;
+            MQTT_BROKER = newBroker;
+            localStorage.setItem('esp32_device_id', DEVICE_ID);
+            localStorage.setItem('esp32_broker', MQTT_BROKER);
+
+            hideSettings();
+
+            // 断开重连
+            disconnectMQTT();
+            addLog('system', '🔄 更新设置，重新连接...');
+            setTimeout(connectMQTT, 500);
+        }
+
+        // ==================== 初始化 ====================
+        function init() {
+            addLog('system', '🚀 Web控制端已启动');
+            addLog('system', '📱 设备ID: ' + DEVICE_ID);
+            connectMQTT();
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', init);
+
+        // 页面关闭时断开连接
+        window.addEventListener('beforeunload', () => {
+            disconnectMQTT();
+        });
+
+        console.log('🌐 ESP32 远程监控 Web 控制端已就绪');
+        console.log('📡 MQTT Broker: wss://' + MQTT_BROKER + ':' + WS_PORT + WS_PATH);
+        console.log('🆔 设备ID: ' + DEVICE_ID);
+    </script>
+</body>
+</html>
